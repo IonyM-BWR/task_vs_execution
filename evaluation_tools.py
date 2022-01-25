@@ -5,9 +5,11 @@ import numpy as np
 class PATHTYPES():
         LOWRES_PATH = 1
         HIGHRES_PATH = 2
+        GEO_PATH = 3
         path_types_dict = {
             LOWRES_PATH: "LOWRES_PATH",
-            HIGHRES_PATH: "HIGHRES_PATH"
+            HIGHRES_PATH: "HIGHRES_PATH",
+            GEO_PATH: "GEO_PATH"
         }
 
 def new_parse_jsontask(task_name):

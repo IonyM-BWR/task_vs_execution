@@ -10,41 +10,118 @@ from abc import ABC, abstractmethod
 import evaluation_tools as tools
 from evaluation_tools import PATHTYPES
 
+def get_xy_from_path(path_):
+    """
+    return x, y: [n], [n] for array of [n,2]
+    """
+    xy_np = np.array(path_)
+    x = np.transpose(xy_np).tolist()[0]
+    y = np.transpose(xy_np).tolist()[1]
+    return x,y
+
 class BasePath(ABC):
     @abstractmethod
-    def load_path(self):
+    def get_localpath_for_plot(self):
         pass
 
-class HLCPath():
-    def __init__(self,path_type_=None):
-        self.set_pathtype(path_type_)
-
-        print("HLC created")
+    @abstractmethod
+    def _set_plot_format(self,format_):
+        pass
     
-    def _set_path(self, path_to_csv):
+    @abstractmethod
+    def get_plot_format(self):
+        pass
+
+    @abstractmethod
+    def get_pathname(self):
+        pass
+    @abstractmethod
+    def _set_pathname(self):
+        pass
+
+
+class HLCPath(BasePath):
+    def __init__(self,path_to_csv_,name_):
+        """
+        Object to process the task geo_path.csv produced by the HLC from the autonomous tractor project
+        """
+        self._geo_path = None
+        self._lat_og = None 
+        self._lon_og = None
+
+        self._set_path(_path_to_csv=path_to_csv_)
+        self._set_pathname(name_)
+        print(f"HLCPath '{name_}' created")
+    
+    def _set_path(self, _path_to_csv):
+        with open(_path_to_csv, 'r') as f:
+            # self._geo_path = np.array(list(csv.reader(f, delimiter=",")))
+            self._geo_path = pd.read_csv(_path_to_csv).values
+
+            print(f"path set with {self._geo_path.shape} waypoints")
+
+    def _set_pathname(self,name_):
+        self._name = name_
+
+    def load_path_fromcsv(self,path_to_csv_):
+        self._set_path(path_to_csv_)
+        print(f"Path loaded with {len(self._geo_path)} waypoints")
+
+    def define_origin_coordinate(self, lat_, lon_):
+        self._lat_og = lat_ 
+        self._lon_og = lon_
+    
+    def get_localpath_for_plot(self):
+        if self._localpath_to_return == PATHTYPES.LOWRES_PATH:
+            _local_path = self._get_lowres_path()
+            
+        elif self._localpath_to_return == PATHTYPES.HIGHRES_PATH:
+            _local_path = self._make_highres_from_lowres(self._get_lowres_path())
         
-        with open(path_to_csv, 'r') as f:
-            self._path = np.array(list(csv.reader(f, delimiter=",")))
+        return get_xy_from_path(_local_path)
 
-            print(f"path set with {self._path.shape} waypoints")
+    def _get_lowres_path(self):
+        """return a locally converted lowres from geo_path"""
 
-        return True
+        lowres_path = []
+        for coord in self._geo_path:
+            lowres_path.append(tools.ll2xy(coord[0], coord[1], self._lat_og, self._lon_og))
+            
+        return lowres_path
 
-    def set_pathtype(self, path_type_:int):
-        if path_type_ not in PATHTYPES.path_types_dict.keys() and path_type_ is not None:
-            print(f"PATH_TYPE {path_type_} not recognized")
-            return False
+    def _make_highres_from_lowres(self, lowres_path_):
+        # parameters for making highres
+        points_per_meter = 4
 
-        self._path_type = path_type_
-        self._path_type_str = PATHTYPES.path_types_dict.get(path_type_)
+        highres_path = []
+        for idx in range(len(lowres_path_)-1):
+            x1, y1 = lowres_path_[idx][0], lowres_path_[idx][1]
+            x2, y2 = lowres_path_[idx+1][0], lowres_path_[idx][1]
+            L = np.hypot(np.abs(x2-x1), np.abs(y2-y1))
+
+            intermediate_pts = round(points_per_meter*L)
+            pts_np = np.linspace([x1, y1],[x1, y2], num=intermediate_pts+2,endpoint=False)
+
+            for point in pts_np:
+                highres_path.append(point.tolist())
         
-        if path_type_: print(f"path type set as {self._path_type_str}")        
-        return True
+        return highres_path
 
-    def load_path_fromcsv(self,path_to_csv_, path_type_):
-        success = self._set_path(path_to_csv_)
-        success &= self.set_pathtype(path_type_)
-        print(f"{self._path_type_str} path loaded with {len(self._path)} waypoints")
+    def get_geopath(self):
+        return self._geo_path
+
+    def get_pathname(self):
+        return self._name
+
+    def set_returntype_forplot(self,path_type_):
+        self._localpath_to_return = path_type_
+        self._set_plot_format("x" if path_type_ == PATHTYPES.LOWRES_PATH else '-o')
+
+    def _set_plot_format(self, format_):
+        self._plot_format = format_
+    
+    def get_plot_format(self):
+        return self._plot_format
 
 class TaskPath():
     latlon_path : list
@@ -58,6 +135,7 @@ class TaskPath():
         self.reference_point = None
         self.xy_lowres_path = None
         self.xy_highres_path = None
+        self._set_plot_format('o')
         print("\nTaskPath instance created")
 
     def load_jsontask(self,taskname):
@@ -79,13 +157,13 @@ class TaskPath():
             self.xy_lowres_path.append(tools.ll2xy(coord[0], coord[1], self.reference_point[0], self.reference_point[1]))
             num += i
 
-    def get_filename(self):
+    def get_pathname(self):
         return self.task_name
     
     def get_lowres_path(self):
         return np.array(self.xy_lowres_path)
     
-    def get_lowres_path_forplot(self):
+    def get_localpath_for_plot(self):
         x = np.transpose(self.get_lowres_path()).tolist()[0]
         y = np.transpose(self.get_lowres_path()).tolist()[1]
         return x,y
@@ -100,6 +178,12 @@ class TaskPath():
     
     def get_reference_coords(self):
         return self.latlon_path[0]
+
+    def _set_plot_format(self, format_):
+        self._plot_format = format_
+    
+    def get_plot_format(self):
+        return self._plot_format
 
 class RecordedPath():
     csv_df : pd.DataFrame()
@@ -169,176 +253,20 @@ class RecordedPath():
         return np.array(self.latlon_path)
     
 class PathPlotter():
-    selected_task_path : TaskPath
-    task_paths : dict # task_path_.get_filename() : task_path_
-    selected_recorded_path : RecordedPath
-    recorded_paths : dict # [RecordedPath.get_filename(), RecordedPath]
-        
-    def __init__(self, task_path_ = None, recorded_path_ = None):
-        self.recorded_paths = dict()
-        self.task_paths = dict()
-        
-        if task_path_:
-            self.selected_task_path = task_path_
-            self.add_taskpath(task_path_)
-        if recorded_path_:
-            self.recorded_path = recorded_path_
-            self.add_recordedpath(recorded_path_)
-            
-        # Plotting variables
-            
+    def __init__(self):
         print("\nPathPlotter instance created")
-        
-    def add_taskpath(self, task_path_: TaskPath):
-        if task_path_.get_filename() in self.task_paths.keys():
-            print(f"ERRROR: {task_path_.get_filename()} already loaded in the PathPlotter")
-            self.list_all_taskpaths()
-            return
 
-        self.task_paths[task_path_.get_filename()] = task_path_
-        print(f"Task path '{task_path_.get_filename()}' added to PathPlotter")
-
-        self.select_task_from_taskpaths(task_path_.get_filename())
-    
-    def select_task_from_taskpaths(self, task_name:str):
-        if task_name not in self.task_paths.keys():
-            print(f"ERROR: '{task_name}' not in task_paths")
-            self.list_all_taskpaths()
-            return
-        
-        self.set_task_as_selected(self.task_paths.get(task_name))
-        print(f"selected task path: {self.selected_task_path.get_filename()}")
-        
-    def set_task_as_selected(self,task_path:TaskPath):
-        self.selected_task_path = task_path
-
-    def add_recordedpath(self, recorded_path_: RecordedPath):
-        if recorded_path_.get_filename() in self.recorded_paths.keys():
-            print(f"ERRROR: '{recorded_path_.get_filename()}' already loaded in the PathPlotter")
-            self.list_all_recordpaths()
-            return
-        
-        self.recorded_paths[recorded_path_.get_filename()] = recorded_path_
-        print(f"Recorded path '{recorded_path_.get_filename()}' added to PathPlotter")
-        
-        self.select_record_from_recordedpaths(recorded_path_.get_filename())
-    
-    def select_record_from_recordedpaths(self, record_name:str):
-        if record_name not in self.recorded_paths.keys():
-            print(f"ERROR: '{record_name}' not in task_paths")
-            self.list_all_recordpaths()
-            return
-        
-        self.set_record_as_selected(self.recorded_paths.get(record_name))
-        print(f"selected record path: {self.selected_record_path.get_filename()}")
-
-    def set_record_as_selected(self,recorded_path:RecordedPath):
-        self.selected_record_path = recorded_path
-
-    def plot_selected_task(self):
-        if self.selected_task_path:
-            x,y = self.selected_task_path.get_lowres_path_forplot()
-            ax = plt.axes()
-            # plt.figure()
-            ax.grid()
-            ax.axis("equal")
-            ax.plot(x,y, "xg")
-            ax.set_xlabel('x(m)')
-            ax.set_ylabel('y(m)')
-            plt.title(self.selected_task_path.get_filename())
-            plt.legend(("hello"))
-
-        else:
-            print('ERROR: No task path loaded')
-    
-    def plot_all_tasks(self):
+    def plot_paths(self, list_of_paths, plot_title_):
         ax = plt.axes()
         ax.grid()
         ax.axis("equal")
         ax.set_xlabel('x(m)')
         ax.set_ylabel('y(m)')
-        ax.set_title(self.selected_task_path.get_filename())
+        ax.set_title(plot_title_)
 
         labels = []
-
-        for task_name, task_path in self.task_paths.items():
-            x,y = task_path.get_lowres_path_forplot()
-            labels.append(task_name)
-            ax.plot(x,y)
+        for path in list_of_paths:
+            x,y = path.get_localpath_for_plot()
+            labels.append(path.get_pathname())
+            ax.plot(x,y,path.get_plot_format())
         ax.legend((labels))
-
-    def plot_recorded(self):
-        if self.selected_recorded_path:
-            x,y = self.selected_recorded_path.get_xypath_forplot()
-            xy = self.selected_recorded_path.get_xypath()
-            print(xy[0])
-            print(xy[1])
-            plt.figure()
-            plt.grid()
-            plt.axis("equal")
-            plt.plot(x,y, "xg")
-            plt.xlabel('x(m)')
-            plt.ylabel('y(m)')
-            plt.title(self.selected_recorded_path.get_filename())
-
-        else:
-            print('ERROR: No planned path loaded')
-    
-    def plot_task_and_record(self, task_name, record_name):
-        print("plotting")
-        task:TaskPath
-        record:RecordedPath
-        task = self.task_paths.get(task_name)
-        record = self.recorded_paths.get(record_name)
-        
-        if task and record:
-            plt.figure()
-            plt.grid()
-            plt.axis("equal")
-
-            
-            task_lats, task_lons = task.get_latlon_path_forplot()
-            record_lats, record_lats = record.get_latlon_path_forplot()
-            
-            ref_lat, ref_lon = record_lats[50], record_lats[50]
-            
-            task_xy = tools.ll2xy(ref_lat, ref_lon, np.array(task_lats), np.array(task_lons))
-            record_xy = tools.ll2xy(ref_lat, ref_lon, np.array(record_lats), np.array(record_lats))
-            
-            num = 10
-            print(record_xy[0][:num], record_xy[1][:num])
-
-            plt.plot(task_xy[0], task_xy[1], "xg")
-            plt.plot(record_xy[0], record_xy[1], "-xb")
-            plt.xlabel('x(m)')
-            plt.ylabel('y(m)')
-            
-            plt.title(f"Task vs Record")
-            plt.legend((f"task:{task_name}", f"record:{record_name}"))
-            
-        else:
-            task_found = True if task else False
-            record_found = True if record else False
-            print(f"task found: {task_found} record found: {record_found}")
-    
-    def _plot_all(self, path):
-        print('not implemented')
-    
-    def list_all_taskpaths(self):
-        print("TASKS STORED IN PATH PLOTTER:")
-        for k in self.task_paths.keys():
-            print(">",k)
-
-
-    def list_all_recordpaths(self):
-        print(self.recorded_paths.keys())
-    
-    def delete_all_taskpaths(self):
-        self.task_paths.clear()
-        self.selected_task_path = None
-        print("task paths cleared")
-    
-    def delete_all_recordedpaths(self):
-        self.recorded_paths.clear()
-        self.selected_record_path = None
-        print("recorded paths cleared")
