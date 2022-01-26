@@ -1,5 +1,9 @@
+# byproducts of development
 __pycache__/
 .ipynb_*/
 .vscode/
-*.csv
+
+# Directories
 Executions/
+task_CSVs/
+*.csv
