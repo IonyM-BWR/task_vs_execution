@@ -1,3 +1,6 @@
 pandas
 matplotlib
 pymap3d
+json
+numpy
+matplotlib
