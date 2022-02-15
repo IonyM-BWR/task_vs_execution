@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import time, csv
+import time
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,6 +11,8 @@ from abc import ABC, abstractmethod
 # Local
 import evaluation_tools as tools
 from evaluation_tools import PATHTYPES
+
+import bwr_modules.bwr_tools as bwr
 
 def get_xy_from_path(path_):
     """
@@ -25,10 +27,11 @@ def get_xy_from_path(path_):
 class BasePath(ABC):
     origin_set = False
 
-    def __init__(self, use_pymap_, classname_):
+    def __init__(self, use_pymap_, classname_, path_name_):
         self.classname = classname_
         self._localpath_to_return_enum = None
-        self.toggle_pymap_use(use_pymap_)
+        self._set_pathname(path_name_)
+        self.toggle_pymap_use(use_pymap_, quiet_=True)
 
     @abstractmethod
     def get_localpath_for_plot(self):
@@ -52,10 +55,12 @@ class BasePath(ABC):
         self.origin_set = True
         print(f'Origin coordinates set to {lat_, lon_}')
 
-    def toggle_pymap_use(self, use_pymap_):
+    def toggle_pymap_use(self, use_pymap_, quiet_=False):
         self._use_pymap = use_pymap_
-        s="" if self._use_pymap else "not"
-        print(f"{self.classname} {s} using Pymap")
+
+        if not quiet_:
+            s="" if self._use_pymap else "not"
+            print(f"{self.get_pathname()} {s} using Pymap")
     
     def set_returntype_forplot(self,path_type_):
         self._localpath_to_return_enum = path_type_
@@ -65,98 +70,26 @@ class BasePath(ABC):
 class HLCPath(BasePath):
     _localpath_to_return_enum : int
 
-    def __init__(self,path_to_csv_,path_name_, plot_format_, use_pymap_=False):
-        """
-        Object to process the task geo_path.csv produced by the HLC from the autonomous tractor project
-        """
-        super().__init__(use_pymap_=use_pymap_, classname_=self.__class__.__name__)
-
-        self._set_path(_path_to_csv=path_to_csv_)
-        self._set_pathname(path_name_)
-        self._set_plot_format(plot_format_)
-
-        self.classname = self.__class__.__name__
-
-        print(f"HLCPath '{path_name_}' created\n")
-    
-    def _set_path(self, _path_to_csv):
-        with open(_path_to_csv, 'r') as f:
-            self._geo_path = pd.read_csv(_path_to_csv).values
-
-            print(f"path set with {self._geo_path.shape} waypoints")
-
-    def _set_pathname(self,name_):
-        self._path_name = name_
-        if not self._localpath_to_return_enum:
-            print('PATHTYPE not defined yet')
-
-    def get_pathname(self):
-        return f"{super().get_pathname()}_{PATHTYPES.path_types_dict.get(self._localpath_to_return_enum)}"
-
-    def load_path_fromcsv(self,path_to_csv_):
-        self._set_path(path_to_csv_)
-        print(f"Path loaded with {len(self._geo_path)} waypoints")
-
-    def get_localpath_for_plot(self):
-        if self._localpath_to_return_enum == PATHTYPES.LOWRES_PATH:
-            _local_path = self._get_lowres_path()
-            
-        elif self._localpath_to_return_enum == PATHTYPES.HIGHRES_PATH:
-            _local_path = self._make_highres_from_lowres(self._get_lowres_path())
-        
-        elif self._localpath_to_return_enum == PATHTYPES.GEO_PATH:
-            _local_path = self.get_latlon_path()
-        
-        return get_xy_from_path(_local_path)
-
-    def _get_lowres_path(self):
-        """return a locally converted lowres from geo_path"""
-        if not self.origin_set:
-            print(f"ERROR: origin point not defined {self.origin_set}")
-            return
-        
-        if self._use_pymap:
-            return [pm.geodetic2enu(lat=coord[0], lon=coord[1], lat0=self._lat_og, lon0=self._lon_og, h=1,h0=1) for coord in self.get_latlon_path()]
-        
-        return [tools.ll2xy(coord[0], coord[1], self._lat_og, self._lon_og) for coord in self.get_latlon_path()]
-
-    def _make_highres_from_lowres(self, lowres_path_):  
-        # parameters for making highres
-        points_per_meter = 4
-
-        highres_path = []
-        for idx in range(len(lowres_path_)-1):
-            x1, y1 = lowres_path_[idx][0], lowres_path_[idx][1]
-            x2, y2 = lowres_path_[idx+1][0], lowres_path_[idx][1]
-            L = np.hypot(np.abs(x2-x1), np.abs(y2-y1))
-
-            intermediate_pts = round(points_per_meter*L)
-            pts_np = np.linspace([x1, y1],[x1, y2], num=intermediate_pts+2,endpoint=False)
-
-            # if intermediate_pts > 4: print(f"x1:{x1}, y1:{y1}, x2:{x2}, y2:{y2}, L:{L}, int_pts:{intermediate_pts}")
-            # if idx % 50 == 0: print(f"pts_np:{pts_np}")
-            
-            for point in pts_np:
-                highres_path.append(point.tolist())
-        
-        return highres_path
-
-    def get_latlon_path(self):
-        return self._geo_path.tolist()
-
 class TaskPath(BasePath):
     def __init__(self, path_to_taskfile__, path_name_, plot_format_, use_pymap_=False):
-        super().__init__(use_pymap_=use_pymap_, classname_=self.__class__.__name__)
+        self._task_loaded = False
+        super().__init__(use_pymap_=use_pymap_, classname_=self.__class__.__name__, path_name_=path_name_)
 
         self.load_jsontask(path_to_taskfile__)
-        self._set_pathname(path_name_)
-        self._set_plot_format(plot_format_)
+        if self._task_loaded:
+            self._set_pathname(path_name_)
+            self._set_plot_format(plot_format_)
 
-        print("\nTaskPath instance created")
+            print("\nTaskPath instance created")
 
     def load_jsontask(self,path_to_task_):
-        self._latlon_path = np.array(tools.new_parse_jsontask(path_to_task_))
-        print(f'json task loaded | {len(self._latlon_path)} waypoints loaded')
+        self._task_loaded = False
+        _latlon_path = np.array(bwr.parse_jsontask(path_to_task_))
+
+        if _latlon_path is not None:
+            self._latlon_path = _latlon_path
+            print(f'json task loaded | {len(self._latlon_path)} waypoints loaded')
+            self._task_loaded = True
     
     def get_xy_path(self):
         """return a locally converted lowres from geo_path"""
@@ -189,22 +122,20 @@ class TaskPath(BasePath):
         pass
 
 class RecordedPath(BasePath):
-    latlon_df : pd.DataFrame
-    latlon_path : list
-    xy_path : list
+    BAG = 1
+    DATALOGGER = 2
     
     def __init__(self, path_to_recordfile_, origin_, path_name_, plot_format_, use_pymap_=False):
         """
-        origin_ can be 'bag' or 'datalogger'
+        origin_ can be RecordedPath.BAG or RecordedPath.DATALOGGER
         """
-        super().__init__(use_pymap_=use_pymap_, classname_=self.__class__.__name__)
+        super().__init__(use_pymap_=use_pymap_, classname_=self.__class__.__name__, path_name_=path_name_)
 
         self._path_loaded = False
         self._geo_path = None
         self._lat_og = None 
         self._lon_og = None
 
-        self._set_pathname(path_name_)
         self.load_recording(path_to_recordfile_, origin_=origin_)
         self._set_plot_format(plot_format_)
 
@@ -227,9 +158,9 @@ class RecordedPath(BasePath):
         self._path_loaded = False
         tic = time.perf_counter()
         try:
-            if origin_=="bag":
+            if origin_==self.BAG:
                 self._load_bag_recording(path_to_bag_=path_to_recordfile_)
-            elif origin_=='datalogger':
+            elif origin_==self.DATALOGGER:
                 self._load_csv_recording(path_to_csv_=path_to_recordfile_)
 
         except Exception as e:
@@ -255,7 +186,6 @@ class RecordedPath(BasePath):
 
     def _load_csv_recording(self, path_to_csv_):
         self.latlon_df = pd.read_csv(path_to_csv_)
-        self.latlon_df[['Latitude','Longitude']].apply(lambda x: x/100) #possibly the coolest thing ive ever seen
 
     def get_latlon_path(self):
         return [[row["Latitude"], row["Longitude"]] for ind, row in self.latlon_df.iterrows()]
@@ -288,7 +218,7 @@ class PathPlotter():
     def plot_paths(self, list_of_paths, plot_title_):
         ax = plt.axes()
         ax.grid()
-        ax.axis("equal")
+        # ax.axis("equal")
         ax.set_xlabel('x(m)')
         ax.set_ylabel('y(m)')
         ax.set_title(plot_title_)
@@ -301,7 +231,7 @@ class PathPlotter():
                 xy = path.get_localpath_for_plot()
                 labels.append(path.get_pathname())
                 if path._use_pymap:
-                    ax.plot(-xy[1],-xy[0],path.get_plot_format())
+                    ax.plot(xy[0],xy[1],path.get_plot_format())
                 else:
                     ax.plot(xy[0],xy[1],path.get_plot_format())
             except Exception as e:
